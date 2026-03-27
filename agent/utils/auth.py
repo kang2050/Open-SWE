@@ -367,12 +367,22 @@ async def resolve_github_token(config: RunnableConfig, thread_id: str) -> tuple[
     X_SERVICE_AUTH_JWT_SECRET), the GitHub App installation token is used
     for all operations instead of per-user OAuth tokens.
 
+    If GITHUB_TOKEN env var is set (self-hosted mode), use it directly
+    without requiring GitHub App or LangSmith OAuth.
+
     Returns:
         (github_token, new_encrypted) tuple.
 
     Raises:
         RuntimeError: If source is missing or token resolution fails.
     """
+    # Self-hosted mode: use GITHUB_TOKEN env var directly
+    env_token = os.environ.get("GITHUB_TOKEN")
+    if env_token:
+        logger.info("Using GITHUB_TOKEN env var for thread %s (self-hosted mode)", thread_id)
+        encrypted = await persist_encrypted_github_token(thread_id, env_token)
+        return env_token, encrypted
+
     if is_bot_token_only_mode():
         return await _resolve_bot_installation_token(thread_id)
 
