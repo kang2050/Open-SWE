@@ -6,10 +6,13 @@ import json
 import logging
 import os
 import uuid
+from pathlib import Path
 from typing import Any
 
 import httpx
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from langchain_core.messages.content import create_text_block
 from langgraph_sdk import get_client
 from langgraph_sdk.client import LangGraphClient
@@ -55,6 +58,15 @@ from .utils.slack import (
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
+
+# Serve frontend UI
+_static_dir = Path(__file__).resolve().parent.parent / "static"
+if _static_dir.exists():
+    @app.get("/ui", response_class=HTMLResponse)
+    async def serve_ui():
+        return (_static_dir / "index.html").read_text(encoding="utf-8")
+
+    app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 
 LINEAR_WEBHOOK_SECRET = os.environ.get("LINEAR_WEBHOOK_SECRET", "")
 GITHUB_WEBHOOK_SECRET = os.environ.get("GITHUB_WEBHOOK_SECRET", "")
