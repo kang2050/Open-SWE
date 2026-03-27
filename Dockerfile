@@ -1,73 +1,46 @@
-FROM python:3.12.12-slim-trixie
+FROM python:3.12-slim
 
-ARG DOCKER_CLI_VERSION=5:29.1.5-1~debian.13~trixie
-ARG NODEJS_VERSION=22.22.0-1nodesource1
-ARG UV_VERSION=0.9.26
-ARG YARN_VERSION=4.12.0
-
-ENV DEBIAN_FRONTEND=noninteractive
-
-RUN apt-get update && apt-get install -y \
-    git \
-    curl \
-    wget \
-    ca-certificates \
-    gnupg \
-    lsb-release \
-    build-essential \
-    openssh-client \
-    jq \
-    unzip \
-    zip \
+# System deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git curl build-essential openssh-client jq \
     && rm -rf /var/lib/apt/lists/*
 
-RUN install -m 0755 -d /etc/apt/keyrings \
-    && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
-    && chmod a+r /etc/apt/keyrings/docker.asc \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo \"$VERSION_CODENAME\") stable" \
-      | tee /etc/apt/sources.list.d/docker.list > /dev/null \
-    && apt-get update \
-    && apt-get install -y "docker-ce-cli=${DOCKER_CLI_VERSION}" \
-    && rm -rf /var/lib/apt/lists/*
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-RUN set -eux; \
-    arch="$(dpkg --print-architecture)"; \
-    case "${arch}" in \
-      amd64) uv_arch="x86_64-unknown-linux-gnu"; uv_sha256="30ccbf0a66dc8727a02b0e245c583ee970bdafecf3a443c1686e1b30ec4939e8" ;; \
-      arm64) uv_arch="aarch64-unknown-linux-gnu"; uv_sha256="f71040c59798f79c44c08a7a1c1af7de95a8d334ea924b47b67ad6b9632be270" ;; \
-      *) echo "unsupported architecture: ${arch}" >&2; exit 1 ;; \
-    esac; \
-    curl -fsSL "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${uv_arch}.tar.gz" -o /tmp/uv.tar.gz; \
-    echo "${uv_sha256}  /tmp/uv.tar.gz" | sha256sum -c -; \
-    tar -xzf /tmp/uv.tar.gz -C /tmp; \
-    install -m 0755 -d /root/.local/bin; \
-    install -m 0755 "/tmp/uv-${uv_arch}/uv" /root/.local/bin/uv; \
-    install -m 0755 "/tmp/uv-${uv_arch}/uvx" /root/.local/bin/uvx; \
-    rm -rf /tmp/uv.tar.gz "/tmp/uv-${uv_arch}"
+WORKDIR /app
 
-ENV PATH=/root/.local/bin:/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Copy project files first for better layer caching
+COPY pyproject.toml uv.lock langgraph.json ./
 
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y "nodejs=${NODEJS_VERSION}" \
-    && rm -rf /var/lib/apt/lists/* \
-    && corepack enable \
-    && corepack prepare "yarn@${YARN_VERSION}" --activate
+# Install dependencies
+RUN uv pip install --system -e . 2>/dev/null || uv pip install --system \
+    "deepagents>=0.4.3" \
+    "fastapi>=0.104.0" \
+    "uvicorn>=0.24.0" \
+    "httpx>=0.25.0" \
+    "PyJWT>=2.8.0" \
+    "cryptography>=41.0.0" \
+    "langgraph-sdk>=0.1.0" \
+    "langchain>=1.2.9" \
+    "langgraph>=1.0.8" \
+    "markdownify>=1.2.2" \
+    "langchain-anthropic>1.1.0" \
+    "langgraph-cli[inmem]>=0.4.12" \
+    "langsmith>=0.7.1" \
+    "langchain-openai==1.1.10" \
+    "exa-py>=2.10.1"
 
-ENV GO_VERSION=1.23.5
+# Copy full source
+COPY . .
 
-RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-$(dpkg --print-architecture).tar.gz" | tar -C /usr/local -xz
+# Install the package itself
+RUN uv pip install --system -e .
 
-ENV PATH=/usr/local/go/bin:/root/.local/bin:/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ENV GOPATH=/root/go
-ENV PATH=/root/go/bin:/usr/local/go/bin:/root/.local/bin:/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Create workspace directory for local sandbox
+RUN mkdir -p /tmp/open-swe-workspace
 
-WORKDIR /workspace
+EXPOSE 8000
 
-RUN echo "=== Installed versions ===" \
-    && python --version \
-    && uv --version \
-    && node --version \
-    && yarn --version \
-    && go version \
-    && docker --version \
-    && git --version
+# Run LangGraph dev server (in-memory mode, suitable for trial)
+CMD ["langgraph", "dev", "--host", "0.0.0.0", "--port", "8000", "--no-browser"]
